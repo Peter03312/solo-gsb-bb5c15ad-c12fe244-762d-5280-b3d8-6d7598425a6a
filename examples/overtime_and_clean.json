@@ -1,0 +1,14 @@
+{
+  "vessel_material": "hdpe",
+  "temperature_c": 20.0,
+  "initial_liquid": [],
+  "steps": [
+    {"seq": 1, "op": "add", "reagent_id": "naoh", "concentration": 5.0, "volume_ml": 100.0},
+    {"seq": 2, "op": "add", "reagent_id": "nacl", "concentration": 10.0, "volume_ml": 100.0, "at_seconds": 60.0},
+    {"seq": 3, "op": "hold", "at_seconds": 600.0},
+    {"seq": 4, "op": "pour", "volume_ml": 50.0, "at_seconds": 660.0},
+    {"seq": 5, "op": "dilute", "volume_ml": 100.0, "at_seconds": 700.0},
+    {"seq": 6, "op": "clean", "at_seconds": 900.0}
+  ],
+  "contact_allowances": []
+}
