@@ -9,16 +9,26 @@ from pydantic import ValidationError
 from . import errors
 from .catalog import MATERIALS, REAGENTS
 from .engine import simulate
-from .models import ErrorDetail, ErrorResponse, PrecheckRequest, PrecheckResponse
+from .models import (
+    ErrorDetail,
+    ErrorResponse,
+    PrecheckRequest,
+    PrecheckResponse,
+    TransferPrecheckRequest,
+    TransferPrecheckResponse,
+)
 from .rules import RULESET_VERSION, RULES_BY_ID
+from .transfer_engine import simulate_transfer
+from .transfer_validator import build_transfer_plan
 from .validator import build_plan
 
 app = FastAPI(
     title="化学试剂混配风险预检 API",
-    version="1.0.0",
+    version="1.1.0",
     description=(
         "提交容器初始液体、按顺序执行的加液步骤、试剂浓度与体积，以及容器材质和温度；"
         "逐步计算混配后各组分浓度，识别禁配组合、超时接触与材质不相容。"
+        "另提供双容器转移预检 /api/v1/transfer-precheck。"
     ),
 )
 
@@ -106,4 +116,21 @@ async def precheck(req: PrecheckRequest) -> PrecheckResponse:
         findings=result["findings"],
         final_state=result["final_state"],
         steps=result["traces"][1:],  # 第 0 条是 initial 快照
+    )
+
+
+@app.post("/api/v1/transfer-precheck", response_model=TransferPrecheckResponse)
+async def transfer_precheck(req: TransferPrecheckRequest) -> TransferPrecheckResponse:
+    plan = build_transfer_plan(req)
+    result = simulate_transfer(plan)
+    return TransferPrecheckResponse(
+        safe=not result["findings"],
+        blocked=bool(result["findings"]),
+        first_blocking_seq=result["first_blocking_seq"],
+        first_blocking_vessel_id=result["first_blocking_vessel_id"],
+        ruleset_version=RULESET_VERSION,
+        temperature_c=plan.temperature_c,
+        findings=result["findings"],
+        steps=result["traces"][1:],  # 第 0 条是 initial 快照
+        final_states=result["final_states"],
     )

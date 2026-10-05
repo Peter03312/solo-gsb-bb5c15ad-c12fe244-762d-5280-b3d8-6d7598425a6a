@@ -1,0 +1,113 @@
+{
+  "safe": false,
+  "blocked": true,
+  "first_blocking_seq": 1,
+  "first_blocking_vessel_id": "bleach-tank",
+  "ruleset_version": "chem-rules-2026-10-01",
+  "temperature_c": 22.0,
+  "findings": [
+    {
+      "seq": 1,
+      "vessel_id": "bleach-tank",
+      "category": "forbidden_mix",
+      "rule_id": "F01",
+      "rule_name": "强酸 + 次氯酸盐释放氯气",
+      "entities": [
+        "hcl",
+        "naocl"
+      ],
+      "concentrations": {
+        "hcl": 10.0,
+        "naocl": 6.6667
+      },
+      "contact_seconds": null,
+      "allowed_seconds": null,
+      "severity": "critical",
+      "reason": "强酸使次氯酸盐转化为氯气（Cl₂），高毒、强刺激，吸入可致死。",
+      "guidance": "严禁向漂白水中加酸；废液须分别中和（次氯酸盐用硫代硫酸钠还原）后处置。",
+      "blocking_reason": "容器 bleach-tank：禁配组合：强酸 + 次氯酸盐释放氯气（F01）在步骤 1 首次共存"
+    }
+  ],
+  "steps": [
+    {
+      "seq": 1,
+      "op": "transfer",
+      "at_seconds": 30.0,
+      "from_vessel": "acid-bottle",
+      "to_vessel": "bleach-tank",
+      "volume_ml": 50.0,
+      "vessels": [
+        {
+          "vessel_id": "acid-bottle",
+          "vessel_material": "hdpe",
+          "liquid_volume_ml": 50.0,
+          "cleaned": false,
+          "components": [
+            {
+              "reagent_id": "hcl",
+              "name": "盐酸（氯化氢）",
+              "concentration": 30.0,
+              "pure_volume_ml": 15.0
+            }
+          ]
+        },
+        {
+          "vessel_id": "bleach-tank",
+          "vessel_material": "hdpe",
+          "liquid_volume_ml": 150.0,
+          "cleaned": false,
+          "components": [
+            {
+              "reagent_id": "hcl",
+              "name": "盐酸（氯化氢）",
+              "concentration": 10.0,
+              "pure_volume_ml": 15.0
+            },
+            {
+              "reagent_id": "naocl",
+              "name": "次氯酸钠溶液（漂白水）",
+              "concentration": 6.6667,
+              "pure_volume_ml": 10.0
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "final_states": [
+    {
+      "vessel_id": "acid-bottle",
+      "vessel_material": "hdpe",
+      "liquid_volume_ml": 50.0,
+      "cleaned": false,
+      "components": [
+        {
+          "reagent_id": "hcl",
+          "name": "盐酸（氯化氢）",
+          "concentration": 30.0,
+          "pure_volume_ml": 15.0
+        }
+      ]
+    },
+    {
+      "vessel_id": "bleach-tank",
+      "vessel_material": "hdpe",
+      "liquid_volume_ml": 150.0,
+      "cleaned": false,
+      "components": [
+        {
+          "reagent_id": "hcl",
+          "name": "盐酸（氯化氢）",
+          "concentration": 10.0,
+          "pure_volume_ml": 15.0
+        },
+        {
+          "reagent_id": "naocl",
+          "name": "次氯酸钠溶液（漂白水）",
+          "concentration": 6.6667,
+          "pure_volume_ml": 10.0
+        }
+      ]
+    }
+  ]
+}

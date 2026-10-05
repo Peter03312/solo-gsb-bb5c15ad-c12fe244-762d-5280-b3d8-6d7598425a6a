@@ -14,6 +14,11 @@
 > 用途：实验室/工艺 SOP 的自动化预检与教学。规则库为简化的公开化学常识集合，
 > **不能替代** MSDS/SDS 与专业 EHS 评估。
 
+> **本轮新增**：双容器定量转移预检 `POST /api/v1/transfer-precheck`
+> （[说明见此节](#双容器转移预检本轮新增)）。原 `/api/v1/precheck` 单容器预检的
+> **请求与响应完全保持兼容，启动方式不变**（仍是同一个 `uvicorn app.main:app` /
+> `docker compose up`，同一端口 8000）。
+
 ---
 
 ## 目录
@@ -21,6 +26,7 @@
 - [快速开始（Docker Compose）](#快速开始docker-compose)
 - [本地运行（不用 Docker）](#本地运行不用-docker)
 - [API 说明](#api-说明)
+- [双容器转移预检（本轮新增）](#双容器转移预检本轮新增)
 - [逐步状态与浓度模型](#逐步状态与浓度模型)
 - [操作类型](#操作类型)
 - [规则、阈值与接触计时](#规则阈值与接触计时)
@@ -66,7 +72,8 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 | --- | --- | --- |
 | `GET` | `/health` | 健康检查，返回规则库版本 |
 | `GET` | `/catalog` | 内置试剂、容器材质与全部规则（含选择器、阈值、默认接触时长） |
-| `POST` | `/api/v1/precheck` | 提交混配流程，返回风险与逐步状态 |
+| `POST` | `/api/v1/precheck` | 单容器混配流程，返回风险与逐步状态（请求/响应保持兼容） |
+| `POST` | `/api/v1/transfer-precheck` | **双容器转移预检**：两只容器之间的定量转移与静置，返回带容器编号的风险与两侧状态 |
 
 ### 请求体
 
@@ -147,6 +154,84 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
 ---
 
+## 双容器转移预检（本轮新增）
+
+`POST /api/v1/transfer-precheck` 判断**已配液在两只容器之间定量转移**时的风险。
+请求描述**编号互异、各有材质与初始液体的两只容器、统一温度**，以及按时刻执行、
+**同刻按序号（seq）执行**的 `transfer`（定量转移）与 `hold`（静置）步骤。
+沿用同一套试剂、浓度阈值与相容性规则（F/T/M 规则、`contact_allowances` 覆盖均通用）。
+
+### 转移语义（充分混合假设）
+
+- **transfer**：按转出体积占源容器当前体积的比例，**同步扣减源容器各组分纯物量与总体积**
+  （部分转出浓度不变）；同一份纯物量与体积**计入目标容器**（目标既有液体会被稀释，各组分重新计浓）。
+- **接触计时跨容器延续规则**：两侧**既有且仍达阈值**的接触片段继续计时；
+  **仅新达阈值**的接触（如转入的试剂与目标容器既有组分/材质首次共存）**从转入时刻起**作为新片段计时；
+  任一条件跌破阈值（含源容器被**转空**）片段即结束，重新满足则重新计时。
+- **检查顺序**：初始状态（t=0）也检查风险；每个步骤**先把时间推进到该时刻并结算两侧此前超时**，
+  再执行操作，然后检查转入后的**即时禁配与材质风险**。
+- 发现风险时模拟继续完成（可看到全部首次触发点），响应给**首次阻断**；输入非法时**整体拒绝、不返回任何部分模拟结果**。
+
+### 请求体
+
+```json
+{
+  "vessels": [
+    {"vessel_id": "acid-bottle", "vessel_material": "hdpe",
+     "initial_liquid": [{"reagent_id": "hcl", "concentration": 30.0, "volume_ml": 100.0}]},
+    {"vessel_id": "bleach-tank", "vessel_material": "hdpe",
+     "initial_liquid": [{"reagent_id": "naocl", "concentration": 10.0, "volume_ml": 100.0}]}
+  ],
+  "temperature_c": 22.0,
+  "steps": [
+    {"seq": 1, "op": "transfer", "from_vessel": "acid-bottle",
+     "to_vessel": "bleach-tank", "volume_ml": 50.0, "at_seconds": 30.0}
+  ],
+  "contact_allowances": []
+}
+```
+
+| 字段 | 说明 |
+| --- | --- |
+| `vessels` | **恰好 2 只**容器；`vessel_id` 非空且**互异**，`vessel_material` 见 `/catalog`，各自带 `initial_liquid`（同容器内试剂不得重复） |
+| `temperature_c` | 两只容器的统一温度 ℃，允许 [-50, 300] |
+| `steps[].op` | `transfer`（定量转移）或 `hold`（仅推进时间） |
+| `transfer` 字段 | `from_vessel` / `to_vessel`（两只互异的已知容器）、`volume_ml`（>0，且不超过源容器当前体积） |
+| `at_seconds` | 同单容器：非负、不回退；缺省沿用上一步时刻；`hold` 须显式且严格晚于当前时刻 |
+| `contact_allowances` | 与单容器相同的反应对时长覆盖，对两侧容器同时生效 |
+
+### 响应要点
+
+- `first_blocking_seq` + **`first_blocking_vessel_id`**：首次阻断所在步骤与容器；无风险时均为 `null`。
+- `findings[]`：每条 finding 额外带 **`vessel_id`**（规则在该容器液相/材质界面上成立），
+  `blocking_reason` 以“容器 X：……”开头；排序为 `(seq, 类别, 容器提交顺序)`，初始触发 `seq=0`。
+- `steps[]`：每步含 `op` / `at_seconds` / `from_vessel` / `to_vessel` / `volume_ml`，
+  以及 **`vessels[]` 两侧状态快照**（各含 `vessel_id`、`vessel_material`、`liquid_volume_ml`、`components[]`）。
+- `final_states[]`：两只容器的末态快照（按提交顺序）。
+
+完整样例见 [`examples/transfer_forbidden.json`](examples/transfer_forbidden.json)
+与 [`examples/transfer_response_blocked.json`](examples/transfer_response_blocked.json)；
+安全/超时样例见 `examples/transfer_safe.json`、`examples/transfer_overtime.json`。
+
+### 转移预检的拒绝码
+
+沿用单容器全部通用码（`DUPLICATE_STEP_SEQ` / `INVALID_SEQ` / `INVALID_VOLUME` /
+`CONCENTRATION_OUT_OF_RANGE` / `UNKNOWN_REAGENT` / `UNKNOWN_MATERIAL` / `UNKNOWN_ENTITY` /
+`TEMPERATURE_OUT_OF_RANGE` / `INVALID_TIME` / `NON_MONOTONIC_TIME` / `DUPLICATE_COMPONENT` /
+`INVALID_STEP_FIELDS` / `INVALID_ALLOWANCE` / `DUPLICATE_ALLOWANCE` / `MALFORMED_REQUEST`），另加：
+
+| Code | 触发条件 |
+| --- | --- |
+| `INVALID_VESSEL` | 容器数量不是恰好 2 只 |
+| `DUPLICATE_VESSEL_ID` | 两只容器 `vessel_id` 相同 |
+| `UNKNOWN_VESSEL` | transfer 的源/目标编号不在两只容器中 |
+| `SAME_VESSEL` | transfer 的源容器与目标容器相同 |
+| `EMPTY_SOURCE_VESSEL` | 源容器为空仍发起转移 |
+| `TRANSFER_EXCEEDS_VOLUME` | 转移体积超过源容器当前液体体积 |
+| `EMPTY_VESSEL_OPERATION` | 两只容器皆空时执行 hold |
+
+---
+
 ## 逐步状态与浓度模型
 
 采用透明的“**纯物体积**”簿记（体积可加、充分混合假设）：
@@ -171,6 +256,9 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 | `hold` | `at_seconds`（严格晚于当前时刻） | 静置等待，仅推进时间用于超时判定；**空容器/清洗后禁止** |
 
 `at_seconds` 缺省沿用上一步时刻；时间只能前进，回退报 `NON_MONOTONIC_TIME`。
+
+> 双容器转移预检（`/api/v1/transfer-precheck`）只支持 `transfer` 与 `hold` 两种操作，
+> 语义见[双容器转移预检](#双容器转移预检本轮新增)。
 
 ## 规则、阈值与接触计时
 
@@ -209,6 +297,10 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 | `STALE_STATE_REFERENCE` | **清洗后仍对旧状态做 pour/dilute/hold** |
 | `INVALID_ALLOWANCE` / `DUPLICATE_ALLOWANCE` | 接触时长声明非法（非正/同实体）或重复 |
 
+> 双容器转移预检另用 `INVALID_VESSEL` / `DUPLICATE_VESSEL_ID` / `UNKNOWN_VESSEL` /
+> `SAME_VESSEL` / `EMPTY_SOURCE_VESSEL` / `TRANSFER_EXCEEDS_VOLUME`，详见
+> [双容器转移预检](#双容器转移预检本轮新增)一节。
+
 ## 内置试剂 / 材质 / 规则
 
 - 试剂 21 种：`h2so4, hcl, hno3, hf, acoh, naoh, koh, nh3, nacl, nabr, naocl, h2o2,
@@ -224,6 +316,11 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 curl -s http://localhost:8000/api/v1/precheck \
   -H 'Content-Type: application/json' \
   --data @examples/allowance_safe.json | python -m json.tool
+
+# 双容器转移（禁配：盐酸从 acid-bottle 转入漂白水 bleach-tank → 氯气）
+curl -s http://localhost:8000/api/v1/transfer-precheck \
+  -H 'Content-Type: application/json' \
+  --data @examples/transfer_forbidden.json | python -m json.tool
 ```
 
 ```python
@@ -248,6 +345,36 @@ if result["blocked"]:
     print("涉及组分浓度：", f["concentrations"])
 ```
 
+双容器转移预检（Python）：
+
+```python
+import requests
+
+payload = {
+    "vessels": [
+        {"vessel_id": "A", "vessel_material": "hdpe",
+         "initial_liquid": [{"reagent_id": "hcl", "concentration": 30, "volume_ml": 100}]},
+        {"vessel_id": "B", "vessel_material": "hdpe",
+         "initial_liquid": [{"reagent_id": "naocl", "concentration": 10, "volume_ml": 100}]},
+    ],
+    "temperature_c": 22.0,
+    "steps": [
+        {"seq": 1, "op": "transfer", "from_vessel": "A", "to_vessel": "B",
+         "volume_ml": 50, "at_seconds": 30}
+    ],
+    "contact_allowances": [],
+}
+r = requests.post("http://localhost:8000/api/v1/transfer-precheck", json=payload, timeout=10)
+r.raise_for_status()
+result = r.json()
+if result["blocked"]:
+    f = result["findings"][0]
+    print(f"阻断于容器 {f['vessel_id']} 步骤 {f['seq']}：{f['blocking_reason']}")
+else:
+    for v in result["final_states"]:
+        print(v["vessel_id"], v["liquid_volume_ml"], "mL")
+```
+
 也可直接查看 [`examples/`](examples/) 下的三个请求样例与一个响应样例。
 
 ## 测试
@@ -259,21 +386,27 @@ python3 -m pytest -q
 
 覆盖：禁配识别与估算浓度、初始液体触发（seq=0）、浓度阈值与稀释、超时接触与 allowance
 覆盖、倒空/稀释对接触片段的重置、HF/玻璃等材质规则、清洗后旧状态引用拒绝、全部输入拒绝码、
-乱序 seq 的稳定处理（35 个用例）。
+乱序 seq 的稳定处理（单容器 35 个用例）；双容器转移另覆盖：比例扣减/计入簿记、源转空结束片段、
+转入侧新片段计时、既有片段跨转移延续、材质/禁配在转入侧触发、初始状态两侧检查、
+同刻按 seq 执行，以及全部转移拒绝码（`tests/test_transfer_api.py`，39 个用例）。
 
 ## 项目结构
 
 ```
 app/
-  catalog.py    # 试剂 / 材质目录与标签
-  rules.py      # 相容性规则库（禁配 / 限时 / 材质）与版本
-  models.py     # 请求响应 Pydantic 模型
-  errors.py     # 错误码
-  validator.py  # 逐项校验 + 归一化执行计划（状态流预检）
-  engine.py     # 逐步混配状态机（浓度簿记 + 接触计时）
-  main.py       # FastAPI 路由与异常映射
-examples/       # curl 可用的请求/响应样例
+  catalog.py            # 试剂 / 材质目录与标签
+  rules.py              # 相容性规则库（禁配 / 限时 / 材质）与版本
+  models.py             # 请求响应 Pydantic 模型（单容器 + 双容器）
+  errors.py             # 错误码
+  validator.py          # 单容器逐项校验 + 归一化执行计划
+  transfer_validator.py # 双容器逐项校验（容器/转移/超量/空源/时序）+ 执行计划
+  runtime.py            # 单只容器的状态机：浓度簿记 + 接触片段对账与超时
+  engine.py             # 单容器预检：重放计划、事件转 findings、快照
+  transfer_engine.py    # 双容器预检：两侧 runtime + transfer/hold 重放
+  main.py               # FastAPI 路由与异常映射
+examples/                 # curl 可用的请求/响应样例（含 transfer_* 四个样例）
 tests/test_api.py
+tests/test_transfer_api.py
 Dockerfile
 docker-compose.yml
 ```

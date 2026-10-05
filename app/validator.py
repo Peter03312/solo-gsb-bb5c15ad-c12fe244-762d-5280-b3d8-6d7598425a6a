@@ -130,45 +130,11 @@ def _validate_component(
     return usable
 
 
-def build_plan(req: PrecheckRequest) -> Plan:
-    errs: list[dict] = []
-
-    if req.vessel_material not in MATERIALS:
-        errs.append(_detail(errors.UNKNOWN_MATERIAL, f"未知容器材质编号：{req.vessel_material}", fld="vessel_material"))
-    if not (-50.0 <= req.temperature_c <= 300.0):
-        errs.append(
-            _detail(
-                errors.TEMPERATURE_OUT_OF_RANGE,
-                f"温度须在 [-50, 300] ℃ 区间内，收到 {req.temperature_c}",
-                fld="temperature_c",
-            )
-        )
-
-    # --------------------------------------------------------------
-    # 初始液体
-    # --------------------------------------------------------------
-    seen_initial: set[str] = set()
-    initial: list[tuple[str, float, float]] = []
-    init_volume = 0.0
-    for i, c in enumerate(req.initial_liquid):
-        pf = f"initial_liquid[{i}]"
-        if c.reagent_id in seen_initial:
-            errs.append(_detail(errors.DUPLICATE_COMPONENT, f"初始液体中试剂 {c.reagent_id} 重复出现", fld=pf))
-        else:
-            seen_initial.add(c.reagent_id)
-        usable = _validate_component(
-            c.reagent_id, c.concentration, c.volume_ml, errs, seq=None, fld_prefix=pf
-        )
-        if usable and c.reagent_id not in [x[0] for x in initial]:
-            initial.append((c.reagent_id, c.concentration, c.volume_ml))  # type: ignore[arg-type]
-            init_volume += c.volume_ml  # type: ignore[operator]
-
-    # --------------------------------------------------------------
-    # 接触时长声明
-    # --------------------------------------------------------------
+def _validate_allowances(items, errs: list[dict], *, pf_root: str = "contact_allowances") -> dict[tuple[str, str], float]:
+    """逐项校验接触时长声明，返回归一化 allowance 映射（pair_key -> 秒）。"""
     allowances: dict[tuple[str, str], float] = {}
-    for i, al in enumerate(req.contact_allowances):
-        pf = f"contact_allowances[{i}]"
+    for i, al in enumerate(items):
+        pf = f"{pf_root}[{i}]"
         ea = resolve_entity(al.a)
         eb = resolve_entity(al.b)
         if ea is None:
@@ -206,6 +172,46 @@ def build_plan(req: PrecheckRequest) -> Plan:
                     )
                 else:
                     allowances[key] = al.max_contact_seconds
+    return allowances
+
+
+def build_plan(req: PrecheckRequest) -> Plan:
+    errs: list[dict] = []
+
+    if req.vessel_material not in MATERIALS:
+        errs.append(_detail(errors.UNKNOWN_MATERIAL, f"未知容器材质编号：{req.vessel_material}", fld="vessel_material"))
+    if not (-50.0 <= req.temperature_c <= 300.0):
+        errs.append(
+            _detail(
+                errors.TEMPERATURE_OUT_OF_RANGE,
+                f"温度须在 [-50, 300] ℃ 区间内，收到 {req.temperature_c}",
+                fld="temperature_c",
+            )
+        )
+
+    # --------------------------------------------------------------
+    # 初始液体
+    # --------------------------------------------------------------
+    seen_initial: set[str] = set()
+    initial: list[tuple[str, float, float]] = []
+    init_volume = 0.0
+    for i, c in enumerate(req.initial_liquid):
+        pf = f"initial_liquid[{i}]"
+        if c.reagent_id in seen_initial:
+            errs.append(_detail(errors.DUPLICATE_COMPONENT, f"初始液体中试剂 {c.reagent_id} 重复出现", fld=pf))
+        else:
+            seen_initial.add(c.reagent_id)
+        usable = _validate_component(
+            c.reagent_id, c.concentration, c.volume_ml, errs, seq=None, fld_prefix=pf
+        )
+        if usable and c.reagent_id not in [x[0] for x in initial]:
+            initial.append((c.reagent_id, c.concentration, c.volume_ml))  # type: ignore[arg-type]
+            init_volume += c.volume_ml  # type: ignore[operator]
+
+    # --------------------------------------------------------------
+    # 接触时长声明
+    # --------------------------------------------------------------
+    allowances = _validate_allowances(req.contact_allowances, errs)
 
     # --------------------------------------------------------------
     # 步骤：逐字段校验
