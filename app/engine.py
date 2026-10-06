@@ -49,6 +49,15 @@ def _side_matches(side, tok: str, concentration: float) -> bool:
     return len(selectors & _entity_tags(tok)) > 0
 
 
+def match_rule(rule: Rule, a: str, b: str, ca: float, cb: float):
+    """返回 ((side_a 上的实体, side_b 上的实体), (side_a 浓度, side_b 浓度))，不匹配返回 None。"""
+    if _side_matches(rule.side_a, a, ca) and _side_matches(rule.side_b, b, cb):
+        return (a, b), (ca, cb)
+    if _side_matches(rule.side_a, b, cb) and _side_matches(rule.side_b, a, ca):
+        return (b, a), (cb, ca)
+    return None
+
+
 @dataclass
 class _RuleEpisode:
     rule_id: str
@@ -137,19 +146,11 @@ class Engine:
                 pairs[key] = {r: conc[r], self.mat_tok: float("inf")}
         return pairs
 
-    def _match_rule(self, rule: Rule, a: str, b: str, ca: float, cb: float):
-        """返回 ((side_a 上的实体, side_b 上的实体), (side_a 浓度, side_b 浓度))，不匹配返回 None。"""
-        if _side_matches(rule.side_a, a, ca) and _side_matches(rule.side_b, b, cb):
-            return (a, b), (ca, cb)
-        if _side_matches(rule.side_a, b, cb) and _side_matches(rule.side_b, a, ca):
-            return (b, a), (cb, ca)
-        return None
-
     def _rules_for_pair(self, key: tuple[str, str], pair_concs: dict[str, float]):
         a, b = key
         matched = []
         for rule in RULES:
-            orient = self._match_rule(rule, a, b, pair_concs[a], pair_concs[b])
+            orient = match_rule(rule, a, b, pair_concs[a], pair_concs[b])
             if orient is not None:
                 (ta, tb), (cc_a, cc_b) = orient
                 matched.append((rule, (ta, tb), (cc_a, cc_b)))

@@ -11,6 +11,9 @@ from .catalog import MATERIALS, REAGENTS
 from .engine import simulate
 from .models import ErrorDetail, ErrorResponse, PrecheckRequest, PrecheckResponse
 from .rules import RULESET_VERSION, RULES_BY_ID
+from .transfer_engine import simulate_transfer
+from .transfer_models import TransferPrecheckRequest, TransferPrecheckResponse
+from .transfer_validator import build_transfer_plan
 from .validator import build_plan
 
 app = FastAPI(
@@ -106,4 +109,22 @@ async def precheck(req: PrecheckRequest) -> PrecheckResponse:
         findings=result["findings"],
         final_state=result["final_state"],
         steps=result["traces"][1:],  # 第 0 条是 initial 快照
+    )
+
+
+@app.post("/api/v2/transfer-precheck", response_model=TransferPrecheckResponse)
+async def transfer_precheck(req: TransferPrecheckRequest) -> TransferPrecheckResponse:
+    """双容器定量转移预检：逐步扣减/计入组分，检查两侧禁配、超时接触与材质风险。"""
+    plan = build_transfer_plan(req)
+    result = simulate_transfer(plan)
+    return TransferPrecheckResponse(
+        safe=not result["findings"],
+        blocked=bool(result["findings"]),
+        first_blocking_seq=result["first_blocking_seq"],
+        ruleset_version=RULESET_VERSION,
+        temperature_c=plan.temperature_c,
+        findings=result["findings"],
+        vessels=result["initial_states"],
+        steps=result["step_traces"],
+        final_states=result["final_states"],
     )

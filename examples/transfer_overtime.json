@@ -1,0 +1,23 @@
+{
+  "vessels": [
+    {
+      "vessel_id": "drum-1",
+      "material": "glass",
+      "initial_liquid": [
+        {"reagent_id": "naoh", "concentration": 30.0, "volume_ml": 100.0}
+      ]
+    },
+    {
+      "vessel_id": "drum-2",
+      "material": "glass",
+      "initial_liquid": []
+    }
+  ],
+  "temperature_c": 20.0,
+  "steps": [
+    {"seq": 1, "op": "transfer", "from_vessel": "drum-1", "to_vessel": "drum-2",
+     "volume_ml": 50.0, "at_seconds": 600.0},
+    {"seq": 2, "op": "hold", "at_seconds": 2000.0}
+  ],
+  "contact_allowances": []
+}
